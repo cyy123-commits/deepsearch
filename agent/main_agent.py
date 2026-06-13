@@ -21,7 +21,42 @@ from api.context import set_session_context, reset_session_context, set_thread_c
 
 from langchain_core.messages import AIMessage
 
-# from api.logger import AgentLogger, AgentLogCallbackHandler
+# --- 死循环防护中间件 ---
+from langchain.agents.middleware.tool_call_limit import ToolCallLimitMiddleware
+from agent.middleware.token_monitor import TokenMonitorMiddleware
+from agent.middleware.dedup import DeduplicationMiddleware
+
+# 方案一：工具调用次数限制
+#   - 全局所有工具：单次 run 最多  次调用
+#   - 网络搜索工具：单次 run 最多  次调用（与 prompts.yml 软约束一致 + 代码硬执行）
+tool_call_limiter_all = ToolCallLimitMiddleware(
+    tool_name=None,       # None = 追踪全部工具
+    run_limit=40,
+    exit_behavior="continue",
+)
+tool_call_limiter_search = ToolCallLimitMiddleware(
+    tool_name="internet_search",
+    run_limit=25,
+    exit_behavior="continue",
+)
+
+# 方案四：Token 消耗监控
+#   按会话累计 (thread) 上限 500,000 token，超限后优雅退出（注入 AIMessage 并 jump_to end）
+#   每次提问 (run) 不单独限制（max_run_tokens=None），仅作为辅助参考展示在前端
+token_monitor = TokenMonitorMiddleware(
+    max_run_tokens=None,       # 不限制每次提问
+    max_thread_tokens=500_000, # 按会话累计限制
+    exit_behavior="end",
+)
+
+# 方案五：工具返回去重检测
+#   相同参数调用同一工具 >=3 次时阻断
+dedup = DeduplicationMiddleware(
+    max_identical_calls=3,
+    dedup_window=20,
+)
+
+
 
 
 
@@ -36,7 +71,12 @@ main_agent=create_deep_agent(
     subagents=subagents_list,
     tools=[generate_markdown,convert_md_to_pdf,read_file_content],
     system_prompt=main_agent_content["system_prompt"],
-
+    middleware=[
+        tool_call_limiter_all,
+        tool_call_limiter_search,
+        token_monitor,
+        dedup,
+    ],
 
 )
 
@@ -95,6 +135,7 @@ async def run_main_agent(task_query,session_id):
     #执行
 
     config={
+        "recursion_limit": 80,  # 限制最大图节点执行步数，防止死循环（LangGraph 层硬兜底）
         "configurable":{
             "thread_id":session_id
         }

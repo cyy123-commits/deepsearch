@@ -1,4 +1,3 @@
-[README.md](https://github.com/user-attachments/files/28538575/README.md)
 # Deep Search Pro
 
 基于多智能体协作的深度搜索系统，集成网络搜索、企业内部数据库查询和知识库检索三大信息源，支持实时进度监控、人工审批（HITL）和文档自动生成。

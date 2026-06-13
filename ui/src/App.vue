@@ -37,6 +37,23 @@ const isWelcomeScreen = computed(() => messages.value.length === 0)
 const isSidebarOpen = ref(false)
 const fileList = ref<any[]>([])
 
+// Token 用量追踪（来自 TokenMonitorMiddleware 推送）
+// 会话累计 (thread) 由后端实例级存储维护，跨提问持续累加
+// 本轮 (run) 每次 astream() 从 0 重新计数
+const tokenUsage = ref<{
+  run: number            // 本轮提问 token 消耗
+  thread: number         // 会话累计 token 消耗
+  maxThread: number      // 会话累计上限
+  modelCallCount: number // 本轮模型调用次数（用于跳过初始提示词阶段）
+  visible: boolean       // 是否显示指示器
+}>({
+  run: 0,
+  thread: 0,
+  maxThread: 500_000,
+  modelCallCount: 0,
+  visible: false,
+})
+
 // HITL: pending approval state
 const pendingApproval = ref<{
   approval_id: string
@@ -174,6 +191,10 @@ const handleSocketMessage = (data: any) => {
     }
     status.value = 'idle'
     fetchFiles()
+    // 任务结束后 3 秒隐藏 token 用量指示器
+    setTimeout(() => {
+      tokenUsage.value.visible = false
+    }, 3000)
   } else if (event === 'approval_required') {
     // HITL: show approval card
     pendingApproval.value = {
@@ -196,6 +217,19 @@ const handleSocketMessage = (data: any) => {
     if (pendingApproval.value?.approval_id === eventData.approval_id) {
       pendingApproval.value = null
       approvalReason.value = ''
+    }
+  } else if (event === 'token_usage') {
+    // Token 消耗实时反馈：关注会话累计
+    const runTotal = eventData?.run_total || 0
+    const threadTotal = eventData?.thread_total || 0
+    const modelCalls = eventData?.model_call_count || 0
+    tokenUsage.value = {
+      run: runTotal,
+      thread: threadTotal,
+      maxThread: eventData?.max_thread_tokens || tokenUsage.value.maxThread,
+      modelCallCount: modelCalls,
+      // 在首次模型调用后即显示（首次约 7000+ token 主要含系统提示词）
+      visible: modelCalls >= 1,
     }
   } else if (event === 'error') {
      messages.value.push({
@@ -509,6 +543,26 @@ onMounted(() => {
               <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"></path>
             </svg>
           </button>
+        </div>
+        <!-- Token 用量指示器：展示会话累计 (thread) + 本轮 (run) -->
+        <div v-if="tokenUsage.visible" class="token-indicator">
+          <div class="token-bar-track">
+            <div
+              class="token-bar-fill"
+              :style="{ width: Math.min(100, (tokenUsage.thread / tokenUsage.maxThread) * 100) + '%' }"
+              :class="{ 'token-warning': tokenUsage.thread / tokenUsage.maxThread > 0.7,
+                       'token-danger': tokenUsage.thread / tokenUsage.maxThread > 0.9 }"
+            ></div>
+          </div>
+          <span class="token-text">
+            会话累计 Token: {{ tokenUsage.thread.toLocaleString() }} / {{ tokenUsage.maxThread.toLocaleString() }}
+            <span v-if="tokenUsage.run > 0" class="token-run-text">
+              （本轮 +{{ tokenUsage.run.toLocaleString() }}）
+            </span>
+            <span v-if="tokenUsage.thread / tokenUsage.maxThread > 0.7" class="token-warn-text">
+              {{ tokenUsage.thread / tokenUsage.maxThread > 0.9 ? ' ⚠️ 即将超限' : ' ⚡ 注意用量' }}
+            </span>
+          </span>
         </div>
         <div class="footer-text">
           DeepAgents may display inaccurate info, including about people, so double-check its responses.
@@ -1139,6 +1193,65 @@ textarea {
 }
 ::-webkit-scrollbar-thumb:hover {
   background: #555;
+}
+
+/* Token 用量指示器 */
+.token-indicator {
+  width: 100%;
+  max-width: 800px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  animation: fadeIn 0.3s ease;
+}
+
+.token-bar-track {
+  width: 100%;
+  height: 4px;
+  background: #333;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.token-bar-fill {
+  height: 100%;
+  background: #4E75F6;
+  border-radius: 2px;
+  transition: width 0.5s ease, background 0.3s ease;
+}
+
+.token-bar-fill.token-warning {
+  background: #f0a040;
+}
+
+.token-bar-fill.token-danger {
+  background: #e3555a;
+  animation: pulse-bar 1.2s infinite;
+}
+
+@keyframes pulse-bar {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.token-text {
+  font-size: 0.75rem;
+  color: #888;
+  text-align: right;
+}
+
+.token-run-text {
+  color: #666;
+}
+
+.token-warn-text {
+  color: #f0a040;
+  font-weight: 500;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 /* ===== HITL Approval Overlay ===== */
