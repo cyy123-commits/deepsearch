@@ -114,5 +114,5 @@ The `HelloWorld.vue` component is the Vite scaffold and is **not used** by the a
 
 - PDF generation uses Word COM and only works on Windows with Microsoft Word installed.
 - The `TAVILY_API_KEY` env var in `.env.example` differs from the actual key name `TA_API_KEY` used in `tavily_tool.py`. Check which one is correct for your setup.
-- `1112.py` and `面试问答文档.md` are scratch/test files outside the main project.
 - There is no test suite — tools are tested by running `if __name__ == "__main__"` blocks directly.
+- Loop prevention middleware is in `agent/middleware/` (ToolCallLimit, TokenMonitor, Deduplication). See `docs/loop_prevention_plan.md` for design details.
